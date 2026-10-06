@@ -1,13 +1,30 @@
-# Swarminu.xyz (SI) — Swarm Inu
+# Swarm Inu (SI)
 
-SI is the INU for the IMD swarm. The source now inherits the plain OpenZeppelin ERC20; swap fees belong to a separate Uniswap v4 hook. This follow-up changes source only: it does not deploy, replace, or re-mint the existing project token. An immutable deployed token cannot be converted to OpenZeppelin by a source change.
+SI is the INU for the IMD swarm. `SwarmInu` is a plain, immutable ERC20; the SI/IMD Uniswap v4 hook charges a fixed 2% input-token fee, and the community vault permanently locks its share. Failed distributions remain backed by PoolManager claims and can be retried without blocking an otherwise valid supported swap.
 
 - Website: https://www.swarminu.xyz/
 - Twitter: https://x.com/swarminu
-- On-chain name: **Swarminu.xyz**; symbol: **SI**; decimals: **18**.
+- Token source metadata: name **Swarm Inu**; symbol **SI**; decimals **18**.
 - Supply: **1,000,000,000 SI**, or **1000000000000000000000000000** minor units, minted once to the constructor's `msg.sender`.
 
-The brief contains both “Swarminu.xyz” and “Swarm Inu” as token names. This implementation uses the first, structured token name on-chain and uses Swarm Inu as the project name. There is no mechanism to rename the deployed token.
+This assignment updates source and local tests only. It deploys no contracts, replaces no existing token, and mints no on-chain supply. The constructor name now matches the requested **Swarm Inu**. Historical artifacts refer to **Swarminu.xyz**; source changes cannot rename an immutable token already deployed with that name.
+
+## Contract addresses and deployment status
+
+The supplied project record identifies launch 826 on Ethereum mainnet (chain ID 1) as **parked**, but supplies no deployed contract addresses. No live addresses were verified in this assignment. Do not use local test addresses as production configuration.
+
+| Contract / recipient | Address or status |
+| --- | --- |
+| Existing SI token | Not supplied; obtain and verify the existing deployment before using `prepareFees` |
+| SI Community Vault | Not supplied; verify the permanent sink and its SI/IMD pair |
+| SIFeeHook | No deployment recorded; calculate the CREATE2 address from the final constructor values |
+| SISwapRouter | No deployment recorded; calculate the CREATE2 address for the verified PoolManager |
+| Uniswap v4 PoolManager | Required verified chain-specific constructor parameter |
+| IMD token | Required verified constructor parameter; the historical manifest's address is unverified |
+| Creator (`<YOUR_WALLET>`) | Not supplied; required immutable `creatorReceiver`, never inferred from the deployer or remainder wallet |
+| SI burn destination | `0x000000000000000000000000000000000000dEaD` |
+
+The release operator must fill in the actual addresses and transaction references after an independently reviewed deployment. The code has no default creator wallet or mechanism to change it later.
 
 ## Contracts
 
@@ -20,6 +37,22 @@ The brief contains both “Swarminu.xyz” and “Swarm Inu” as token names. T
 | `script/PrepareLaunch.s.sol` | Explicit-argument CREATE2 planning; `prepareFees` reuses an existing token and vault. No broadcasting or key access. |
 
 `LaunchLiquidity`, `HookFlags`, and `PoolInitializationGuard` are compatibility helpers for the supplied launch checks. **The production pool must use `SIFeeHook` as `PoolKey.hooks`.** `PoolInitializationGuard` alone does not charge fees. The supplied protected test creates its own guard, so it establishes ERC20 launch compatibility, not fee-hook deployment correctness.
+
+```mermaid
+flowchart TD
+    Trader[Trader: SI or IMD input] --> Router[SISwapRouter: limits and settlement]
+    Router --> Manager[Uniswap v4 PoolManager: SI/IMD pool]
+    Manager -->|Swap callbacks| Hook[SIFeeHook: immutable 2% input fee]
+    Hook -->|Buy: 80% IMD / Sell: 50% SI| Vault[SICommunityVault: permanent holdings]
+    Hook -->|Buy: 20% IMD| Creator[Immutable creator receiver]
+    Hook -->|Sell: 50% SI| Dead[Dead address: burn metric]
+    Hook -->|Failed delivery| Pending[Fixed-recipient debt backed by ERC6909 claims]
+    Keeper[Anyone: flush retry] --> Pending
+    Pending -->|Retry only to recorded recipient| Hook
+    Manager -->|Output token| Recipient[Trader-selected recipient]
+```
+
+The token contains no transfer fee or owner controls. Neither the hook nor the vault swaps tokens. The vault has no outgoing token calls, approvals, admin, redemption, or upgrade path.
 
 ## Fees and permanent holdings
 
@@ -98,7 +131,7 @@ forge test
 forge fmt --check
 ```
 
-Tests use a real local Uniswap v4 PoolManager and cover token supply/allowances, permanent holdings, launch settlement, input fees in both directions, exact-input/output and partial fills, payout failures and retries, authorization, slippage, and accounting conservation. The protected environment-driven harness is an external admission check; the delivered tests are self-contained and do not impersonate its environment.
+Tests use a real local Uniswap v4 PoolManager and cover token supply/allowances, permanent holdings, launch settlement, input fees in both directions, exact-input/output and partial fills, payout failures and retries, authorization, slippage, and accounting conservation. First swaps into pools holding only the output token exercise genuine insufficient-reserve fee failures, including deferred SI burns and partial retry accounting. Fault-injection tests also cover a rejected burn transfer and failed recipient balance queries. The protected environment-driven harness is an external admission check; the delivered tests are self-contained and do not impersonate its environment.
 
 Before release, the network operator must resolve the missing deployment parameters, confirm the existing token and vault addresses, confirm that its launch factory can select this custom fee hook with zero LP fee, verify deployed bytecode and the final pool key, arrange pending-fee retries, and obtain the separate independent adversarial review requested by the assignment. Local tests and an implementation review are not a security audit. No transactions have been broadcast.
 
@@ -116,6 +149,6 @@ Before release, the network operator must resolve the missing deployment paramet
 | Router `unlockCallback` | Only PoolManager during an active swap |
 | Planner | Anyone; computes data without transactions or authority |
 
-The changes address source conformance to OpenZeppelin, privileged initialization, false-success payouts, unsafe creator destinations, and unbounded retry gas. Tests exercise the real vendored PoolManager, including failure recovery and stateful accounting in both currency orders. Non-blocking means distribution failure does not stop an otherwise valid supported swap: it does not waive invalid pool/callback checks, router requirements for partial input fills, token settlement failure, caller slippage limits, or EVM gas requirements. A token that lies in balance queries, rebases, taxes transfers, or changes through external governance is not a supported production IMD.
+Tests exercise the real vendored PoolManager, including failure recovery and stateful accounting in both currency orders. Non-blocking means distribution failure does not stop an otherwise valid supported swap: it does not waive invalid pool/callback checks, router requirements for partial input fills, token settlement failure, caller slippage limits, or EVM gas requirements. A token that lies in balance queries, rebases, taxes transfers, or changes through external governance is not a supported production IMD.
 
 See [VALIDATION.md](VALIDATION.md) for the checks actually run. Local verification is not an independent security audit. Release still requires independent adversarial review and resolution of the documented deployment inputs and factory integration.

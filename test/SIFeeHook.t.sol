@@ -17,6 +17,7 @@ import {SIFeeHook} from "../src/SIFeeHook.sol";
 import {SISwapRouter} from "../src/SISwapRouter.sol";
 import {LaunchLiquidity} from "../src/LaunchLiquidity.sol";
 import {AdversarialIMD} from "./mocks/AdversarialIMD.sol";
+import {IERC20} from "../src/interfaces/IERC20.sol";
 
 contract SIFeeHookTest is Test, IUnlockCallback {
     SwarmInu internal si;
@@ -36,6 +37,12 @@ contract SIFeeHookTest is Test, IUnlockCallback {
     }
 
     function _deploy(bool siFirst, bool singleSided) internal {
+        int24 lower = singleSided && siFirst ? int24(0) : int24(-60000);
+        int24 upper = singleSided && !siFirst ? int24(0) : int24(60000);
+        _deployWithLiquidity(siFirst, lower, upper);
+    }
+
+    function _deployWithLiquidity(bool siFirst, int24 lower, int24 upper) private {
         si = new SwarmInu();
         AdversarialIMD template = new AdversarialIMD();
         address pairAt = address(uint160(address(si)) + (siFirst ? 1 : 0));
@@ -67,8 +74,6 @@ contract SIFeeHookTest is Test, IUnlockCallback {
             IHooks(address(hook))
         );
         manager.initialize(key, Q96);
-        int24 lower = singleSided && siFirst ? int24(0) : int24(-60000);
-        int24 upper = singleSided && !siFirst ? int24(0) : int24(60000);
         manager.unlock(abi.encode(LaunchLiquidity.Seed(key, lower, upper, 1_000_000 ether)));
         si.transfer(TRADER, 10_000_000 ether);
         imd.mint(TRADER, 10_000_000 ether);
@@ -209,6 +214,114 @@ contract SIFeeHookTest is Test, IUnlockCallback {
         assertEq(hook.pending(address(imd), address(vault)), 16 ether);
         imd.setMode(address(vault), AdversarialIMD.Mode.Normal);
         imd.setMode(CREATOR, AdversarialIMD.Mode.Normal);
+        assertTrue(hook.flush(address(imd), address(vault), 16 ether));
+        assertTrue(hook.flush(address(imd), CREATOR, 4 ether));
+        assertEq(vault.totalIMDHeld(), 16 ether);
+        assertEq(imd.balanceOf(CREATOR), 4 ether);
+        _checkClaims();
+    }
+
+    function test_firstSingleSidedSellDefersBurnUntilInputSettles() public {
+        _deployWithLiquidity(true, -60000, 0);
+        _checkSingleSidedSell(false);
+    }
+
+    function test_firstSingleSidedExactOutputSellWithReverseOrdering() public {
+        _deployWithLiquidity(false, 0, 60000);
+        _checkSingleSidedSell(true);
+    }
+
+    function _checkSingleSidedSell(bool exactOutput) private {
+        // This pool starts with IMD only. Fee transfers fail against the real SI
+        // token because manager has no SI until the trader settles the input.
+        assertEq(si.balanceOf(address(manager)), 0);
+        uint256 beforeSI = si.balanceOf(TRADER);
+        uint256 beforeIMD = imd.balanceOf(TRADER);
+        BalanceDelta delta = _swap(false, exactOutput ? int256(500 ether) : -int256(1000 ether));
+        uint256 paid = _input(delta, false);
+        uint256 fee = paid / 50;
+        uint256 burnShare = fee / 2;
+        uint256 vaultShare = fee - burnShare;
+        assertGt(fee, 0);
+        assertGt(_output(delta, false), 0);
+        if (exactOutput) assertEq(_output(delta, false), 500 ether);
+        else assertEq(paid, 1000 ether);
+        assertEq(beforeSI - si.balanceOf(TRADER), paid);
+        assertEq(imd.balanceOf(TRADER) - beforeIMD, _output(delta, false));
+        assertEq(si.balanceOf(address(manager)), paid);
+        assertEq(vault.totalSILocked(), 0);
+        assertEq(vault.totalSIBurned(), 0, "pending burns are not completed burns");
+        assertEq(hook.pending(address(si), address(vault)), vaultShare);
+        assertEq(hook.pending(address(si), hook.DEAD()), burnShare);
+        _checkClaims();
+
+        // An unrelated keeper may retry a portion, but cannot redirect the fee.
+        vm.startPrank(address(0xCAFE));
+        assertTrue(hook.flush(address(si), hook.DEAD(), burnShare / 2));
+        vm.stopPrank();
+        assertEq(vault.totalSIBurned(), burnShare / 2);
+        assertEq(hook.pending(address(si), hook.DEAD()), burnShare - burnShare / 2);
+        _checkClaims();
+        assertTrue(hook.flush(address(si), address(vault), vaultShare));
+        assertTrue(hook.flush(address(si), hook.DEAD(), burnShare - burnShare / 2));
+        assertEq(vault.totalSILocked(), vaultShare);
+        assertEq(vault.totalSIBurned(), burnShare);
+        assertEq(vault.totalIMDHeld(), 0);
+        assertEq(si.balanceOf(CREATOR), 0);
+        assertEq(si.balanceOf(address(manager)), paid - fee);
+        assertEq(si.totalSupply(), 1_000_000_000 ether);
+        _checkClaims();
+    }
+
+    function test_failedBurnDoesNotBlockVaultPaymentOrSubsequentSwaps() public {
+        // Fault injection targets only the fee transfer. SI has no real blacklist.
+        vm.mockCallRevert(
+            address(si), abi.encodeWithSelector(IERC20.transfer.selector, hook.DEAD()), "burn delivery unavailable"
+        );
+        BalanceDelta delta = _swap(false, -1000 ether);
+        assertEq(_input(delta, false), 1000 ether);
+        assertGt(_output(delta, false), 0);
+        assertEq(vault.totalSILocked(), 10 ether);
+        assertEq(vault.totalSIBurned(), 0);
+        assertEq(hook.pending(address(si), hook.DEAD()), 10 ether);
+        assertFalse(hook.flush(address(si), hook.DEAD(), 10 ether));
+        _checkClaims();
+
+        _swap(false, -1000 ether);
+        _swap(true, -1000 ether);
+        assertEq(vault.totalSILocked(), 20 ether);
+        assertEq(vault.totalSIBurned(), 0);
+        assertEq(hook.pending(address(si), hook.DEAD()), 20 ether);
+        assertEq(vault.totalIMDHeld(), 16 ether);
+        assertEq(imd.balanceOf(CREATOR), 4 ether);
+        _checkClaims();
+
+        vm.clearMockedCalls();
+        assertTrue(hook.flush(address(si), hook.DEAD(), 20 ether));
+        assertEq(vault.totalSIBurned(), 20 ether);
+        assertEq(si.totalSupply(), 1_000_000_000 ether);
+        address dead = hook.DEAD();
+        vm.expectRevert(SIFeeHook.InvalidAmount.selector);
+        hook.flush(address(si), dead, 20 ether);
+        _checkClaims();
+    }
+
+    function test_recipientBalanceQueryFailuresDeferFeesWithoutBlockingBuy() public {
+        vm.mockCallRevert(address(imd), abi.encodeCall(IERC20.balanceOf, (address(vault))), "vault balance unavailable");
+        vm.mockCallRevert(address(imd), abi.encodeCall(IERC20.balanceOf, (CREATOR)), "creator balance unavailable");
+        uint256 beforeBalance = imd.balanceOf(TRADER);
+        BalanceDelta delta = _swap(true, -1000 ether);
+        assertEq(beforeBalance - imd.balanceOf(TRADER), 1000 ether);
+        assertGt(_output(delta, true), 0);
+        assertEq(hook.pending(address(imd), address(vault)), 16 ether);
+        assertEq(hook.pending(address(imd), CREATOR), 4 ether);
+        assertFalse(hook.flush(address(imd), address(vault), 16 ether));
+        assertFalse(hook.flush(address(imd), CREATOR, 4 ether));
+        _checkClaims();
+
+        vm.clearMockedCalls();
+        assertEq(vault.totalIMDHeld(), 0);
+        assertEq(imd.balanceOf(CREATOR), 0);
         assertTrue(hook.flush(address(imd), address(vault), 16 ether));
         assertTrue(hook.flush(address(imd), CREATOR, 4 ether));
         assertEq(vault.totalIMDHeld(), 16 ether);

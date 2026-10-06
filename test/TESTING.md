@@ -4,6 +4,8 @@ The tests use the vendored Foundry and Uniswap v4 sources and need no network, R
 
 | Suite | Properties and failure paths |
 | --- | --- |
+| `TokenVault.t.sol` | Swarm Inu / SI metadata, constructor-only fixed supply, ordinary untaxed ERC20 transfers, allowances, permanent holdings and dead-address burn metrics. |
+| `SIFeeHook.t.sol` | Buy/sell splits, exact input/output, partial fills, genuine insufficient-reserve payouts, deferred burns, fixed-recipient retries, failed burn transfers and failed balance queries. |
 | `invariant/TokenVaultInvariant.t.sol` | Four actors transfer, approve, revoke, spend allowances, donate, and attempt vault exits over time. An independent ledger checks every balance and allowance, the fixed supply, and permanent SI/IMD/dead-address custody. |
 | `invariant/SIFeeAccountingInvariant.t.sol` | Three traders swap in both directions, request exact input/output, hit price limits, round-trip, donate SI, change payout-token behavior, retry debts, and submit invalid swaps. Both currency orderings run against the real local PoolManager. |
 | `SIAdversarialBoundaries.t.sol` | One-wei and fee/split thresholds, integer limits, callback ordering, pool-key validation, constructor rejection, router recipients, finite/infinite allowances, malformed token returns, transfer-tax settlement mismatch, and settlement reentrancy. |

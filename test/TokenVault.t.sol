@@ -23,7 +23,7 @@ contract TokenVaultTest is Test {
     }
 
     function test_metadataAndConstructorMint() public {
-        assertEq(token.name(), "Swarminu.xyz");
+        assertEq(token.name(), "Swarm Inu");
         assertEq(token.symbol(), "SI");
         assertEq(token.decimals(), 18);
         assertEq(token.totalSupply(), SUPPLY);

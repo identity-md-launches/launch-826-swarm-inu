@@ -1,19 +1,26 @@
-# Local validation — fee-system follow-up
+# Local validation — Swarm Inu
 
-Toolchain: Foundry 1.8.3, Solidity **0.8.26** as pinned by the unchanged `foundry.toml`, Cancun EVM, optimizer 200, `bytecode_hash = "none"`.
+Toolchain: Foundry **1.7.1** (`4072e48705af9d93e3c0f6e29e93b5e9a40caed8`), Solidity **0.8.26** as pinned by the unchanged `foundry.toml`, Cancun EVM, optimizer 200, `bytecode_hash = "none"`.
 
-- `forge build`: passed. Foundry emitted advisory lint warnings, described below.
-- `forge test`: **69 passed, 0 failed, 0 skipped across 9 suites**, including fuzz tests and three stateful invariant campaigns. Each invariant campaign completed 16,384 handler calls with zero unexpected reverts.
+- `forge build`: passed, with advisory lint warnings.
+- `forge test`: **78 passed, 0 failed, 0 skipped across 9 suites**, including fuzz tests and the token/vault and both currency-order fee invariant suites.
 - `forge fmt --check`: passed.
 - `git diff --check`: passed.
-- Production runtime sizes read from compiled artifacts: SI 1,722 bytes; vault 590; hook 5,847; router 4,050. The local planner is 20,491 bytes. All are below EIP-170's 24,576-byte limit.
+- Runtime sizes from compiled artifacts: SI 1,722 bytes; vault 590; hook 5,847; router 4,050; local planner 20,488. All are below the 24,576-byte EIP-170 limit.
 
-The fee tests execute the vendored Uniswap v4 PoolManager with no RPC, network, FFI, environment reads/writes, or broadcast. Both currency orderings, exact input/output, partial fills, empty liquidity, rounding, backing of deferred fees, and recipient splits are covered. Four existing fuzz tests use 256 runs each; two boundary fuzz tests use 1,000 runs each. Each invariant campaign runs 256 sequences of 64 handler calls, with unexpected reverts treated as failures.
+The token's constructor metadata now reads **Swarm Inu / SI**, retaining 18 decimals and the one-time 1,000,000,000 SI mint to its deployer. The existing immutable fee hook and permanent vault were retained. No sample token, owner mint/burn controls, proxy, or upgrade component is part of these production contracts. Existing compatibility helpers remain because the launch tests use them; the production pool must use `SIFeeHook`.
 
-The nine added hardening tests cover true-returning no-op/underpaid transfers, atomic rollback, gas exhaustion at both destinations, bounded retries, low-gas retry/swap deferral, oversized revert data, retry reentrancy, repeated claims, invalid creator destinations, and absent administrative selectors. Stateful fee campaigns now include no-op and taxed payout modes as well as the earlier hostile-token behaviors. Token tests check the plain OpenZeppelin constructor mint and standard balance/allowance behavior; the vault retains no exit path.
+Four added integration tests cover:
 
-Two added planner tests verify that router/hook initcodes can be deployed against an existing SI and vault, initialize through an unrelated caller, preserve token supply and balances, and reject incompatible dependencies. No on-chain contract was deployed, replaced, or re-minted by this assignment.
+- A first exact-input sell into an IMD-only pool, where the real SI token rejects both fee transfers until trader input settles. The swap succeeds, all fees remain claim-backed, and permissionless partial retries update the burn metric only on actual delivery.
+- The same insufficient-SI condition for an exact-output sell in the reverse currency order, preserving actual wallet spend and output accounting.
+- An injected SI burn-transfer failure: vault payment and later buys/sells still succeed, debt accumulates only for the dead address, recovery pays once, and duplicate retry is rejected.
+- Injected IMD recipient balance-query failures: buys and their settlement succeed, unsuccessful retries preserve claims, and recovery delivers the original 80/20 entitlements.
 
-The build linter flags signed casts, calls preceding guard cleanup/events, code-presence checks instead of explicit zero-address checks, the router deadline timestamp comparison, and existing liquidity-helper return values. Relevant preconditions were reviewed: fee casts follow int128/sign bounds; guards are set before external interactions; payout debt is debited before transfer and restored on failure; automatic and manual payout paths cap gas and avoid outer return-data copying; zero addresses fail code checks. The liquidity helper uses the combined liquidity delta; router settlement requires an exact amount. Warnings were not suppressed.
+The single-sided sell tests use the actual SI runtime and actual vendored Uniswap v4 PoolManager, with no mocked fee transfer. The other two additions use Foundry call fault injection to isolate payout failure from otherwise valid token settlement. Existing tests cover buy/sell splits, rounding, exact input/output, partial fills, absent administrative selectors, reentrancy, false/malformed/no-return transfers, underpayments, oversized revert data, payout gas exhaustion, bounded retries, slippage rollback, and permanent vault holdings.
 
-No Slither, Mythril, live-chain fork, independent audit, or external network admission check ran. Tests establish local behavior, not production address identity or factory compatibility. Before release, the operator must verify the existing SI/vault, IMD semantics, PoolManager, creator, actual CREATE2 factory, atomic initialization, pool funding/LP custody, and pending-fee retry operations. The historical `launch.json` still records an incompatible token/vault-only launch configuration; production needs integration with the documented zero-LP-fee hook pool. These responsibilities and the restriction to SISwapRouter for partial exact-input fills are documented in README.md.
+Tests need no RPC, network, environment reads/writes, FFI, filesystem cheatcode permission, or broadcast. Fuzz tests run 256 cases, with the two boundary fuzz tests configured for 1,000 cases each. Stateful suites run 256 sequences of 64 handler calls with unexpected reverts treated as failures. No dependencies, build configuration, or protected paths were changed.
+
+The build linter reports advisory signed-cast and unchecked-transfer warnings, among others. Fee casts are bounded by the hook's sign/int128 checks; payout debt is updated before transfer and restored atomically on failure; both automatic payout and manual retry paths bound gas and avoid copying outer return data. Warnings were not suppressed.
+
+No Slither, Mythril, live-chain fork, independent audit, or external network admission check ran. Nothing was deployed, replaced, or re-minted on chain. Before release, the operator must verify the existing SI/vault, IMD semantics, PoolManager, creator wallet, CREATE2 factory, atomic initialization, liquidity custody, and pending-fee retry operations. The historical `launch.json` still describes an incompatible token/vault-only launch; it is not a deployment plan for this hook. README.md records the missing addresses, required zero-LP-fee pool, partial-fill router requirement, and limits of the non-blocking guarantee.
