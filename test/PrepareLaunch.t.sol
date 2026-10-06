@@ -65,7 +65,6 @@ contract PrepareLaunchTest is Test {
         assertEq(address(router), plan.router.predicted);
         assertEq(address(hook), plan.hook.predicted);
         assertEq(uint160(address(hook)) & 0x3fff, 0x20cc);
-        assertEq(hook.initializer(), address(factory));
         assertEq(hook.creatorReceiver(), CREATOR);
         assertEq(hook.partialFillRouter(), address(router));
         assertEq(address(hook.poolManager()), address(manager));
@@ -124,5 +123,68 @@ contract PrepareLaunchTest is Test {
         planner.prepare(address(factory), address(manager), address(imd), address(0), 42, 18);
         vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
         planner.prepare(address(factory), address(manager), address(imd), CREATOR, 42, 37);
+    }
+
+    function test_feeOnlyPlanPreservesExistingTokenVaultAndAllowsAnyInitializer() public {
+        SwarmInu token = new SwarmInu();
+        SICommunityVault vault = new SICommunityVault(address(token), address(imd));
+        token.transfer(address(vault), 123 ether);
+        uint256 supply = token.totalSupply();
+        uint256 balance = token.balanceOf(address(this));
+        PrepareLaunch.FeePlan memory plan = planner.prepareFees(
+            PrepareLaunch.FeeConfig(
+                address(factory), address(manager), address(token), address(imd), address(vault), CREATOR, 826
+            )
+        );
+        assertEq(plan.token, address(token));
+        assertEq(plan.vault, address(vault));
+        SISwapRouter router = SISwapRouter(factory.deploy(plan.router.initCode, plan.router.salt));
+        SIFeeHook hook = SIFeeHook(factory.deploy(plan.hook.initCode, plan.hook.salt));
+        assertEq(hook.si(), address(token));
+        assertEq(hook.imd(), address(imd));
+        assertEq(address(hook.vault()), address(vault));
+        assertEq(hook.partialFillRouter(), address(router));
+        assertEq(hook.creatorReceiver(), CREATOR);
+        assertEq(address(router), plan.router.predicted);
+        assertEq(address(hook), plan.hook.predicted);
+        assertEq(address(plan.pool.hooks), address(hook));
+        assertEq(plan.pool.fee, 0);
+        assertEq(plan.pool.tickSpacing, 60);
+
+        vm.prank(address(0xB0B));
+        manager.initialize(plan.pool, uint160(1 << 96));
+        (uint160 price,,,) = IPoolManager(address(manager)).getSlot0(plan.pool.toId());
+        assertEq(price, uint160(1 << 96));
+        assertEq(token.totalSupply(), supply);
+        assertEq(token.balanceOf(address(this)), balance);
+        assertEq(token.balanceOf(address(factory)), 0);
+        assertEq(vault.totalSILocked(), 123 ether);
+    }
+
+    function test_feeOnlyPlanRejectsWrongVaultAndInvalidParameters() public {
+        SwarmInu token = new SwarmInu();
+        SICommunityVault vault = new SICommunityVault(address(token), address(imd));
+        PrepareLaunch.FeeConfig memory config = PrepareLaunch.FeeConfig(
+            address(factory), address(manager), address(token), address(imd), address(vault), CREATOR, 826
+        );
+        config.si = address(imd);
+        vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
+        planner.prepareFees(config);
+        config.si = address(token);
+        config.vault = address(new SICommunityVault(address(imd), address(token)));
+        vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
+        planner.prepareFees(config);
+        config.vault = address(vault);
+        config.creator = address(manager);
+        vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
+        planner.prepareFees(config);
+        config.creator = CREATOR;
+        config.factory = address(0);
+        vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
+        planner.prepareFees(config);
+        config.factory = address(factory);
+        config.manager = address(123);
+        vm.expectRevert(PrepareLaunch.InvalidParameters.selector);
+        planner.prepareFees(config);
     }
 }

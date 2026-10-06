@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IERC20Errors} from "src/vendor/openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
 import {SIIntegrationFixture} from "./helpers/SIIntegrationFixture.sol";
 import {SettlementIMD} from "./mocks/SettlementIMD.sol";
 import {SwarmInu} from "src/SwarmInu.sol";
@@ -62,7 +64,9 @@ contract SIAdversarialBoundariesTest is SIIntegrationFixture {
         vm.prank(TRADER);
         si.approve(RECIPIENT, type(uint256).max);
         vm.expectRevert(
-            abi.encodeWithSelector(SwarmInu.ERC20InsufficientBalance.selector, TRADER, beforeBalance, type(uint256).max)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, TRADER, beforeBalance, type(uint256).max
+            )
         );
         vm.prank(RECIPIENT);
         si.transferFrom(TRADER, RECIPIENT, type(uint256).max);

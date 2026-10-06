@@ -11,7 +11,9 @@ contract AdversarialIMD {
         GasGrief,
         Reenter,
         ShortReturn,
-        ReturnBomb
+        ReturnBomb,
+        NoTransfer,
+        TaxedTransfer
     }
 
     mapping(address => uint256) public balanceOf;
@@ -56,8 +58,15 @@ contract AdversarialIMD {
         if (behavior == Mode.GasGrief) {
             assembly { for {} 1 {} {} }
         }
+        if (behavior == Mode.NoTransfer) return true;
         balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        if (behavior == Mode.TaxedTransfer) {
+            uint256 received = amount - 1;
+            balanceOf[to] += received;
+            totalSupply -= 1;
+        } else {
+            balanceOf[to] += amount;
+        }
         if (behavior == Mode.FalseAfterTransfer) return false;
         if (behavior == Mode.NoReturn) {
             assembly { return(0, 0) }

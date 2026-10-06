@@ -24,6 +24,7 @@ contract SIFeeHook is IUnlockCallback {
     int24 public constant TICK_SPACING = 60;
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
     uint256 public constant PAYOUT_GAS = 120_000;
+    uint256 public constant FLUSH_GAS = 200_000;
 
     IPoolManager public immutable poolManager;
     address public immutable si;
@@ -31,7 +32,6 @@ contract SIFeeHook is IUnlockCallback {
     SICommunityVault public immutable vault;
     address public immutable creatorReceiver;
     address public immutable partialFillRouter;
-    address public immutable initializer;
     mapping(address currency => mapping(address recipient => uint256 amount)) public pending;
     bool private swapping;
     bool private flushing;
@@ -41,11 +41,11 @@ contract SIFeeHook is IUnlockCallback {
     error OnlyPoolManager();
     error OnlySelf();
     error InvalidPool();
-    error OnlyInitializer();
     error Reentrancy();
     error InvalidAmount();
     error PartialFillRequiresRouter();
     error InvalidCallback();
+    error PayoutMismatch();
 
     event FeeAccrued(address indexed currency, uint256 fee);
     event PayoutDeferred(address indexed currency, address indexed recipient, uint256 amount);
@@ -65,6 +65,12 @@ contract SIFeeHook is IUnlockCallback {
                 || address(vault_).code.length == 0 || creatorReceiver_ == address(0)
                 || partialFillRouter_.code.length == 0
         ) revert InvalidConfiguration();
+        // A creator payout must not be an unrecoverable self-transfer or system donation.
+        if (
+            creatorReceiver_ == address(manager_) || creatorReceiver_ == address(this)
+                || creatorReceiver_ == address(vault_) || creatorReceiver_ == partialFillRouter_
+                || creatorReceiver_ == si_ || creatorReceiver_ == imd_ || creatorReceiver_ == DEAD
+        ) revert InvalidConfiguration();
         if (
             address(vault_.si()) != si_ || address(vault_.imd()) != imd_
                 || address(ISIRefundRouter(partialFillRouter_).poolManager()) != address(manager_)
@@ -76,7 +82,6 @@ contract SIFeeHook is IUnlockCallback {
         vault = vault_;
         creatorReceiver = creatorReceiver_;
         partialFillRouter = partialFillRouter_;
-        initializer = msg.sender;
     }
 
     modifier onlyManager() {
@@ -84,14 +89,8 @@ contract SIFeeHook is IUnlockCallback {
         _;
     }
 
-    function beforeInitialize(address sender, PoolKey calldata key, uint160)
-        external
-        view
-        onlyManager
-        returns (bytes4)
-    {
+    function beforeInitialize(address, PoolKey calldata key, uint160) external view onlyManager returns (bytes4) {
         _checkPool(key);
-        if (sender != initializer) revert OnlyInitializer();
         return IHooks.beforeInitialize.selector;
     }
 
@@ -159,11 +158,17 @@ contract SIFeeHook is IUnlockCallback {
             revert InvalidAmount();
         }
         flushing = true;
-        try poolManager.unlock(abi.encode(currency, recipient, amount)) returns (bytes memory) {
-            delivered = true;
-        } catch {
-            emit PayoutDeferred(currency, recipient, amount);
+        // Bound the entire unlock, including token calls and v4's revert-data wrapping.
+        // Copy no return data, and leave gas to clear the guard even if the child runs out.
+        if (gasleft() > FLUSH_GAS + 50_000) {
+            bytes memory callData = abi.encodeCall(poolManager.unlock, (abi.encode(currency, recipient, amount)));
+            address manager = address(poolManager);
+            uint256 cap = FLUSH_GAS;
+            assembly ("memory-safe") {
+                delivered := call(cap, manager, 0, add(callData, 32), mload(callData), 0, 0)
+            }
         }
+        if (!delivered) emit PayoutDeferred(currency, recipient, amount);
         flushing = false;
     }
 
@@ -209,9 +214,12 @@ contract SIFeeHook is IUnlockCallback {
     }
 
     function _deliver(Currency currency, address recipient, uint256 amount) private {
+        uint256 balanceBefore = currency.balanceOf(recipient);
         pending[Currency.unwrap(currency)][recipient] -= amount;
         poolManager.burn(address(this), currency.toId(), amount);
         poolManager.take(currency, recipient, amount);
+        uint256 balanceAfter = currency.balanceOf(recipient);
+        if (balanceAfter < balanceBefore || balanceAfter - balanceBefore != amount) revert PayoutMismatch();
         emit PayoutDelivered(Currency.unwrap(currency), recipient, amount);
     }
 

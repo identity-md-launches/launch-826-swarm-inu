@@ -14,8 +14,8 @@ import {SIFeeHook} from "../src/SIFeeHook.sol";
 import {HookFlags} from "../src/HookFlags.sol";
 
 /// @notice Local, deterministic deployment planning. No environment, wallet, or broadcast access.
-/// @dev Deploy the four initcodes through `factory` in token/vault/router/hook order. The factory
-/// must initialize Plan.pool with this custom fee hook, never PoolInitializationGuard.
+/// @dev Follow-up integrations use prepareFees with the existing token and vault. prepare is the
+/// historical fresh-launch planner. Neither entry point deploys or sends transactions.
 contract PrepareLaunch {
     uint256 public constant SUPPLY = 1_000_000_000 ether;
     address public constant REMAINDER_TO = 0x66522f25035C3FAFd2c6D950a506FDa457E06344;
@@ -46,7 +46,64 @@ contract PrepareLaunch {
         address remainderTo;
     }
 
+    struct FeeConfig {
+        address factory;
+        address manager;
+        address si;
+        address imd;
+        address vault;
+        address creator;
+        uint64 launchNumber;
+    }
+
+    struct FeePlan {
+        address token;
+        address vault;
+        Deployment router;
+        Deployment hook;
+        PoolKey pool;
+    }
+
+    /// @notice Plan only the router and hook for an existing SI token and immutable vault.
+    /// @dev Contains no token/vault initcode, mint, token transfer, liquidity move or broadcast.
+    /// Verify production bytecode and deploy+initialize atomically to avoid initialization races.
+    function prepareFees(FeeConfig calldata config) external view returns (FeePlan memory plan) {
+        if (
+            config.factory == address(0) || config.manager.code.length == 0 || config.si.code.length == 0
+                || config.imd.code.length == 0 || config.si == config.imd || config.vault.code.length == 0
+                || config.creator == address(0) || config.creator == config.manager || config.creator == config.si
+                || config.creator == config.imd || config.creator == config.vault || config.creator == address(0xdEaD)
+        ) revert InvalidParameters();
+        SICommunityVault sink = SICommunityVault(config.vault);
+        if (address(sink.si()) != config.si || address(sink.imd()) != config.imd) revert InvalidParameters();
+
+        plan.token = config.si;
+        plan.vault = config.vault;
+        plan.router = _deployment(
+            config.factory,
+            abi.encodePacked(type(SISwapRouter).creationCode, abi.encode(IPoolManager(config.manager))),
+            keccak256(abi.encode("SI_SWAP_ROUTER", config.launchNumber))
+        );
+        if (config.creator == plan.router.predicted) revert InvalidParameters();
+        plan.hook.initCode = abi.encodePacked(
+            type(SIFeeHook).creationCode,
+            abi.encode(IPoolManager(config.manager), config.si, config.imd, sink, config.creator, plan.router.predicted)
+        );
+        (plan.hook.salt, plan.hook.predicted) =
+            _mineHook(config.factory, keccak256(plan.hook.initCode), config.launchNumber);
+        if (config.creator == plan.hook.predicted) revert InvalidParameters();
+        bool siIsZero = config.si < config.imd;
+        plan.pool = PoolKey(
+            Currency.wrap(siIsZero ? config.si : config.imd),
+            Currency.wrap(siIsZero ? config.imd : config.si),
+            0,
+            60,
+            IHooks(plan.hook.predicted)
+        );
+    }
+
     /// @param imdDecimals Verified decimals of the actual IMD contract (0 through 36).
+    /// @notice Historical fresh-launch planner; do not use for the existing project's token.
     /// @dev Addresses are explicit inputs and must be verified on the intended chain before launch.
     /// The hook salt search is bounded; changing factory or launch number gives a new search domain.
     function prepare(

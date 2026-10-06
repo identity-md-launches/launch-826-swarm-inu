@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IERC20Errors} from "src/vendor/openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {SwarmInu} from "../src/SwarmInu.sol";
@@ -68,7 +70,7 @@ contract TokenVaultTest is Test {
         assertEq(token.balanceOf(BOB), spent);
         assertEq(token.balanceOf(address(this)), SUPPLY - spent);
         assertTrue(token.approve(ALICE, 0));
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InsufficientAllowance.selector, ALICE, 0, 1));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, ALICE, 0, 1));
         vm.prank(ALICE);
         token.transferFrom(address(this), BOB, 1);
     }
@@ -83,7 +85,7 @@ contract TokenVaultTest is Test {
 
     function test_rejectedTransfersPreserveBalancesAndAllowance() public {
         token.approve(ALICE, 123);
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InvalidReceiver.selector, address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
         vm.prank(ALICE);
         token.transferFrom(address(this), address(0), 123);
         assertEq(token.allowance(address(this), ALICE), 123);
@@ -91,23 +93,26 @@ contract TokenVaultTest is Test {
 
         vm.prank(BOB);
         token.approve(ALICE, 123);
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InsufficientBalance.selector, BOB, 0, 123));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, BOB, 0, 123));
         vm.prank(ALICE);
         token.transferFrom(BOB, ALICE, 123);
         assertEq(token.allowance(BOB, ALICE), 123);
 
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InsufficientBalance.selector, ALICE, 0, 1));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, ALICE, 0, 1));
         vm.prank(ALICE);
         token.transfer(BOB, 1);
     }
 
     function test_invalidZeroAddresses() public {
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InvalidSpender.selector, address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidSpender.selector, address(0)));
         token.approve(address(0), 1);
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InvalidReceiver.selector, address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
         token.transfer(address(0), 0);
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InvalidSender.selector, address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidApprover.selector, address(0)));
         token.transferFrom(address(0), ALICE, 0);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidSender.selector, address(0)));
+        vm.prank(address(0));
+        token.transfer(ALICE, 0);
     }
 
     function test_noMintOrHolderControl() public {
@@ -181,7 +186,7 @@ contract TokenVaultTest is Test {
             assertFalse(success);
         }
         vm.expectRevert(
-            abi.encodeWithSelector(SwarmInu.ERC20InsufficientAllowance.selector, address(this), 0, 100 ether)
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(this), 0, 100 ether)
         );
         token.transferFrom(address(vault), ALICE, 100 ether);
         assertEq(token.allowance(address(vault), address(this)), 0);

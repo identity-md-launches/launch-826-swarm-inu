@@ -73,7 +73,7 @@ contract SIFeeSequenceHandler is Test {
 
     function setPayoutBehavior(uint256 rawMode, bool creatorRecipient) public {
         // Include failures after mutation, malformed return data, out-of-gas, and callbacks.
-        AdversarialIMD.Mode mode = AdversarialIMD.Mode(rawMode % 8);
+        AdversarialIMD.Mode mode = AdversarialIMD.Mode(rawMode % 10);
         imd.setMode(creatorRecipient ? creator : address(vault), mode);
         if (mode == AdversarialIMD.Mode.Reenter) {
             imd.setReentry(address(hook), abi.encodeCall(hook.flush, (address(imd), creator, 1)));

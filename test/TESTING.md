@@ -1,6 +1,6 @@
 # SI adversarial test additions
 
-The existing tests remain unchanged. These additions use the vendored Foundry and Uniswap v4 sources and need no network, RPC, environment mutation, or extra dependencies.
+The tests use the vendored Foundry and Uniswap v4 sources and need no network, RPC, environment mutation, or extra dependencies.
 
 | Suite | Properties and failure paths |
 | --- | --- |
@@ -12,7 +12,7 @@ Each invariant campaign uses 256 sequences of 64 calls with `fail-on-revert = tr
 
 The fee oracle uses actual trader wallet spend and the requested 2% rate. It checks each destination's delivered tokens plus pending fees against independently accumulated entitlements. Pending fees must exactly equal the hook's ERC6909 claims, those claims must have token backing in the PoolManager, and the router must retain no swap tokens or refund claims. After each sequence, recipient behavior is restored and every remaining debt must be deliverable. SI sent to the dead address stays in the fixed ERC20 supply and is separately counted as burned, as required by the requested dead-address mechanism.
 
-The external-token mocks model payout failures and settlement quirks. `SettlementIMD` deliberately shares the payout mock's initial storage layout so tests can replace the external token runtime without altering the production SI, vault, hook, router, or PoolManager. Retry transactions receive an explicit gas budget to bound hostile-token gas consumption.
+The external-token mocks model payout failures and settlement quirks. `SettlementIMD` deliberately shares the payout mock's initial storage layout so tests can replace the external token runtime without altering the production SI, vault, hook, router, or PoolManager. The hook itself bounds retry gas; the handlers also supply explicit transaction gas budgets. Payout modes additionally cover true-returning no-op and taxed transfers, whose mutations must roll back while preserving recipient debts.
 
 Run all checks with:
 
@@ -22,3 +22,5 @@ forge test
 ```
 
 No fork test was run. Live deployment addresses, the deployed IMD token, factory admission, and production liquidity still need verification against the target chain; the offline suite does not establish those facts.
+
+`SIFeeHardening.t.sol` covers false-success/underpaid transfers, gas exhaustion at both fee destinations, bounded retries, oversized revert data, low-gas deferral, retry reentrancy, duplicate retries, invalid creator destinations, and absence of administrative selectors. `PrepareLaunch.t.sol` additionally deploys only the planned fee hook/router while preserving an existing token and vault, and initializes through an unrelated caller. The token suites use OpenZeppelin's IERC6093 errors, including InvalidApprover for a zero-from transferFrom that reaches allowance validation.

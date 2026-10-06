@@ -303,15 +303,14 @@ contract SIFeeHookTest is Test, IUnlockCallback {
         hook.unlockCallback("");
     }
 
-    function test_poolValidationAndInitializationAuthority() public {
+    function test_poolValidationAndPermissionlessInitialization() public {
         PoolKey memory bad = key;
         bad.fee = 3000;
         vm.expectRevert(SIFeeHook.InvalidPool.selector);
         vm.prank(address(manager));
         hook.beforeInitialize(address(this), bad, Q96);
-        vm.expectRevert(SIFeeHook.OnlyInitializer.selector);
         vm.prank(address(manager));
-        hook.beforeInitialize(TRADER, key, Q96);
+        assertEq(hook.beforeInitialize(TRADER, key, Q96), IHooks.beforeInitialize.selector);
         bad = key;
         bad.tickSpacing = 10;
         vm.expectRevert(SIFeeHook.InvalidPool.selector);

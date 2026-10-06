@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IERC20Errors} from "src/vendor/openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
 import {Test} from "forge-std/Test.sol";
 import {SwarmInu} from "src/SwarmInu.sol";
 import {SICommunityVault} from "src/SICommunityVault.sol";
@@ -70,18 +72,18 @@ contract TokenVaultHandler is Test {
         address actor = actors[seed % 4];
         uint256 balance = expectedBalance[address(token)][actor];
         if (kind % 3 == 0) {
-            vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InvalidReceiver.selector, address(0)));
+            vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
             vm.prank(actor);
             token.transfer(address(0), 0);
         } else if (kind % 3 == 1) {
             vm.expectRevert(
-                abi.encodeWithSelector(SwarmInu.ERC20InsufficientBalance.selector, actor, balance, balance + 1)
+                abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, actor, balance, balance + 1)
             );
             vm.prank(actor);
             token.transfer(actors[(seed % 4 + 1) % 4], balance + 1);
         } else {
             // Even an arbitrary holder cannot spend a permanently locked vault balance.
-            vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InsufficientAllowance.selector, actor, 0, 1));
+            vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, actor, 0, 1));
             vm.prank(actor);
             token.transferFrom(address(vault), actor, 1);
         }
@@ -95,7 +97,7 @@ contract TokenVaultHandler is Test {
         vm.prank(owner);
         token.approve(spender, 0);
         expectedAllowance[address(token)][owner][spender] = 0;
-        vm.expectRevert(abi.encodeWithSelector(SwarmInu.ERC20InsufficientAllowance.selector, spender, 0, 1));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, spender, 0, 1));
         vm.prank(spender);
         token.transferFrom(owner, spender, 1);
         ++rejectedCalls;
