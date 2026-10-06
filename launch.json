@@ -1,0 +1,28 @@
+{
+  "kind": "custom_token",
+  "token": {
+    "contract": "SwarmInu",
+    "name": "Swarminu.xyz",
+    "symbol": "SI",
+    "decimals": 18,
+    "constructorArgs": [],
+    "totalSupply": "1000000000000000000000000000"
+  },
+  "contracts": [
+    {
+      "contract": "SICommunityVault",
+      "constructorArgs": [
+        "$token",
+        "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7"
+      ]
+    }
+  ],
+  "pool": {
+    "pairedCurrency": "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7",
+    "fee": 3000,
+    "tickSpacing": 60,
+    "initialPrice": "125270724187523965593206900"
+  },
+  "economics": {"poolBps":8800,"initialMarketCapWei":"2500000000000000000000","remainderTo":"0x66522f25035c3fafd2c6d950a506fda457e06344"},
+  "notes": "Swarm Inu (SI), the INU for the IMD swarm. The accepted SwarmInu contract's on-chain name is Swarminu.xyz. Its no-argument constructor mints the entire 1,000,000,000 SI supply, with 18 decimals, to msg.sender once. SI is a plain ERC20 with no subsequent minting, owner powers, transfer restrictions, or token transfer fee. SICommunityVault receives SI and IMD, accepts direct donations, and has no owner or withdrawal, release, redeem, or claim function. Its views report IMD held, SI locked, and SI at 0x000000000000000000000000000000000000dEaD; dead-address transfers do not reduce totalSupply. Twitter: https://x.com/swarminu Website: https://www.swarminu.xyz/ The initialPrice is provenance for SI as currency0: floor(sqrt(initialMarketCapWei / totalSupply) * 2^96). The deployer derives the actual opening price from the supplied economics and deployed currency ordering. Integration blocker: this manifest deploys the token and vault only and does not implement the requested 2% swap-fee distribution. The accepted SIFeeHook rejects every nonzero pool fee, whereas admission permits only 500, 3000, or 10000. The selected 3000 is the permitted 0.3% pool fee, not the requested hook charge. SIFeeHook and its required SISwapRouter are therefore omitted. Their PoolManager address and the hook's creator receiver were not supplied; the remainder recipient is not assumed to replace <YOUR_WALLET>. Completing the requested hook launch requires a compatible accepted implementation and pool-hook integration, plus verified constructor addresses; notes cannot supply deployment authority. No initialization calls are specified."
+}
